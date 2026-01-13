@@ -12,16 +12,23 @@ pydirectinput.FAILSAFE = False
 SENSOR_CAST_X, SENSOR_CAST_Y = 137, 446
 SENSOR_BITE_X, SENSOR_BITE_Y = 960, 540
 
-# --- 2. REELING CONFIGURATION ---
-# UPDATE THIS to match your specific resolution/bar location
-REEL_X, REEL_Y = 510, 830 
-REEL_W, REEL_H = 900, 1
+# --- 2. REELING CONFIGURATION (UPDATED) ---
+# Calculated from your new box: (523, 795) to (1401, 870)
+REEL_X = 523
+REEL_Y = 832  # Exact vertical center of your box
+REEL_W = 878
+REEL_H = 1    # We still scan 1 pixel height for max speed
 
-class PredictiveFisher:
+# --- 3. POPUP CLAIM CONFIGURATION ---
+# (Kept from previous setting)
+CLAIM_X = 934
+CLAIM_Y = 626
+
+class DayNightFisher:
     def __init__(self):
         self.active = False
-        print("--- AUTOMATION: PREDICTIVE MOMENTUM ENGINE ---")
-        print("Fixes: Lag ('Sleeping'), Edge Sticking, Prediction")
+        print("--- AUTOMATION: COORDINATES UPDATED ---")
+        print(f"Scanning Bar at Y={REEL_Y} (Width={REEL_W})")
         print("Controls: [F1] START | [F2] STOP")
 
     def check_pixel(self, x, y, color):
@@ -47,29 +54,24 @@ class PredictiveFisher:
         return False
 
     def phase_wait(self):
-        print("[2] Waiting...")
+        print("[2] Waiting for Bite...")
         start = time.time()
         while time.time() - start < 15:
             if keyboard.is_pressed('f2'): return False
             if self.check_pixel(SENSOR_BITE_X, SENSOR_BITE_Y, 'red'):
                 pydirectinput.click()
+                print("-> HOOKED!")
                 return True
             time.sleep(0.05)
         return False
 
     def phase_reel(self):
-        print("[3] PREDICTIVE REELING (No Console Logs)...")
+        print("[3] Reeling...")
         time.sleep(0.2)
         
         start_game = time.time()
         mouse_held = False
-        
-        # MOTION TRACKING VARIABLES
         last_fish_x = 0
-        
-        # PREDICTION TUNING
-        # How many pixels to aim ahead? 
-        # Increase this if it still trails behind.
         MOMENTUM_FACTOR = 1.5 
 
         while time.time() - start_game < 25:
@@ -77,56 +79,51 @@ class PredictiveFisher:
                 pydirectinput.mouseUp()
                 return
 
-            # 1. Capture Image
             try:
+                # Capture just the new bar area
                 img = pyautogui.screenshot(region=(REEL_X, REEL_Y, REEL_W, REEL_H))
                 row = np.array(img)[0]
             except: continue
 
-            # 2. Find Objects
-            # Fish = Blue Channel Spike
-            blue_diff = row[:, 2].astype(int) - row[:, 0].astype(int)
-            fish_x = np.argmax(blue_diff)
+            # --- DAY/NIGHT COLOR MATH ---
+            R = row[:, 0].astype(int)
+            G = row[:, 1].astype(int)
+            B = row[:, 2].astype(int)
+
+            # Score = Blue - Red - Green (Ignores Sky)
+            blue_score = B - R - G
+            fish_x = np.argmax(blue_score)
             
-            # Bar = Brightness Spike
+            # Find Bar (Brightest Object)
             bright_scores = np.sum(row, axis=1)
             bar_x = np.argmax(bright_scores)
 
-            # Check Game Over
+            # End Condition: Bar Disappears
             if np.max(bright_scores) < 50:
                 pydirectinput.mouseUp()
                 break
 
-            # 3. VELOCITY CALCULATION (Prediction)
-            if last_fish_x == 0: last_fish_x = fish_x # First frame init
-            
-            # Calculate speed: (Current - Last)
+            # Predictive Logic
+            if last_fish_x == 0: last_fish_x = fish_x
             velocity = fish_x - last_fish_x
             last_fish_x = fish_x
-
-            # Apply Prediction: Aim where the fish IS GOING, not where it IS.
             predicted_target = fish_x + (velocity * MOMENTUM_FACTOR)
 
-            # 4. EDGE CLAMPING (Fixes "Stuck at side" bug)
-            # If fish is hugging the right wall (>850px), FORCE HOLD
-            if fish_x > (REEL_W - 50):
+            # Edge Clamping
+            if fish_x > (REEL_W - 50): # Right Wall
                 if not mouse_held:
                     pydirectinput.mouseDown()
                     mouse_held = True
-                continue # Skip the rest of the logic
+                continue 
             
-            # If fish is hugging left wall (<50px), FORCE RELEASE
-            if fish_x < 50:
+            if fish_x < 50: # Left Wall
                 if mouse_held:
                     pydirectinput.mouseUp()
                     mouse_held = False
                 continue
 
-            # 5. CONTROL LOGIC
-            # Use the PREDICTED target, not the actual fish_x
+            # Movement
             dist = predicted_target - bar_x
-            
-            # Offset: Aim slightly right (-10) to fight gravity
             if dist > -10:
                 if not mouse_held:
                     pydirectinput.mouseDown()
@@ -135,8 +132,13 @@ class PredictiveFisher:
                 if mouse_held:
                     pydirectinput.mouseUp()
                     mouse_held = False
-            
-            # NO PRINTS HERE. Printing causes "Sleeping" lag.
+
+    def phase_claim(self):
+        print("[4] Catch Finished. Waiting for Popup...")
+        time.sleep(4.0) 
+        pydirectinput.moveTo(CLAIM_X, CLAIM_Y)
+        pydirectinput.click()
+        time.sleep(1.0) 
 
     def start_loop(self):
         while True:
@@ -158,12 +160,12 @@ class PredictiveFisher:
                     time.sleep(0.5)
                     if self.phase_wait():
                         self.phase_reel()
-                        time.sleep(3.0)
+                        self.phase_claim()
                     else:
                         time.sleep(1)
                 else:
                     time.sleep(1)
 
 if __name__ == "__main__":
-    bot = PredictiveFisher()
+    bot = DayNightFisher()
     bot.start_loop()
